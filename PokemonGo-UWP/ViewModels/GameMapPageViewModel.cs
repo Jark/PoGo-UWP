@@ -18,7 +18,9 @@ using PokemonGo_UWP.Views;
 using POGOProtos.Data;
 using POGOProtos.Data.Player;
 using POGOProtos.Inventory;
+using POGOProtos.Inventory.Item;
 using POGOProtos.Map.Pokemon;
+using POGOProtos.Networking.Responses;
 using Template10.Common;
 using Template10.Mvvm;
 using Template10.Services.NavigationService;
@@ -59,26 +61,69 @@ namespace PokemonGo_UWP.ViewModels
                             break;
                     }
                 });
+            }            
+
+            var lastLevelAwardReceived = SettingsService.Instance.LastLevelAwardReceived;
+            var playerLevel = PlayerStats.Level;
+            if (lastLevelAwardReceived != playerLevel)
+            {
+                await HandleLevelAwards(lastLevelAwardReceived, playerLevel);
             }
+
             if (suspensionState.Any())
             {
                 // Recovering the state                
-                PlayerProfile = (PlayerData) suspensionState[nameof(PlayerProfile)];
-                PlayerStats = (PlayerStats) suspensionState[nameof(PlayerStats)];                
+                PlayerProfile = (PlayerData)suspensionState[nameof(PlayerProfile)];
             }
             else
             {
-                // No saved state, get them from the client                
+                // No saved state or first startup, get them from the client
                 PlayerProfile = (await GameClient.GetProfile()).PlayerData;
-                InventoryDelta = (await GameClient.GetInventory()).InventoryDelta;
-                var tmpStats = InventoryDelta.InventoryItems.First(item => item.InventoryItemData.PlayerStats != null).InventoryItemData.PlayerStats;
-                if (PlayerStats != null && PlayerStats.Level != tmpStats.Level)
-                {
-                    // TODO: report level increase
-                }
-                PlayerStats = tmpStats;
             }
+
             await Task.CompletedTask;
+        }
+
+        private static async Task HandleLevelAwards(int lastLevelAwardReceived, int playerLevel)
+        {
+            for (var level = lastLevelAwardReceived + 1; level <= playerLevel; level++)
+            {
+                var levelUpAwards = await GameClient.GetLevelUpRewards(level);
+                SettingsService.Instance.LastLevelAwardReceived = level;
+
+                if (levelUpAwards.Result != LevelUpRewardsResponse.Types.Result.Success)
+                    continue;
+
+                var messageBuilder = new StringBuilder();
+                messageBuilder.AppendLine("Congratulations, you gained another level!").AppendLine();
+                if (levelUpAwards.ItemsUnlocked.Any())
+                {
+                    messageBuilder.AppendLine("Items unlocked:");
+                    foreach (var itemUnlocked in levelUpAwards.ItemsUnlocked)
+                    {
+                        messageBuilder.AppendLine(GetItemIdAsNiceString(itemUnlocked));
+                    }
+                    messageBuilder.AppendLine();
+                }
+
+                if (levelUpAwards.ItemsAwarded.Any())
+                {
+                    messageBuilder.AppendLine("Items awarded:");
+                    foreach (var itemAward in levelUpAwards.ItemsAwarded)
+                    {
+                        messageBuilder.AppendLine($"{itemAward.ItemCount} x {GetItemIdAsNiceString(itemAward.ItemId)}");
+                    }
+                    messageBuilder.AppendLine();
+                }
+
+                await new MessageDialog(messageBuilder.ToString(), $"Awards for level {level}").ShowAsyncQueue();
+            }
+        }
+
+        private static string GetItemIdAsNiceString(ItemId itemId)
+        {
+            // todo, these need to come out of a resource file somewhere
+            return itemId.ToString().Replace("Item", "");
         }
 
         /// <summary>
@@ -156,17 +201,7 @@ namespace PokemonGo_UWP.ViewModels
         /// <summary>
         ///     Stats for the current player, including current level and experience related stuff
         /// </summary>
-        public PlayerStats PlayerStats
-        {
-            get { return _playerStats; }
-            set { Set(ref _playerStats, value); }
-        }
-
-        public InventoryDelta InventoryDelta
-        {
-            get { return _inventoryDelta; }
-            set { Set(ref _inventoryDelta, value); }
-        }
+        public PlayerStatsWrapper PlayerStats => GameClient.PlayerStats;
 
         /// <summary>
         ///     Collection of Pokemon in 1 step from current position

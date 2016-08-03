@@ -23,5 +23,12 @@ namespace PokemonGo_UWP.Utils
             get { return _helper.Read(nameof(PtcAuthToken), string.Empty); }
             set { _helper.Write(nameof(PtcAuthToken), value); }
         }
+
+        public int LastLevelAwardReceived
+        {
+            // we're defaulting the base value to 1 because you don't get any awards for the first level
+            get { return _helper.Read(nameof(LastLevelAwardReceived), 1) ; }
+            set { _helper.Write(nameof(LastLevelAwardReceived), value);}
+        }
     }
 }

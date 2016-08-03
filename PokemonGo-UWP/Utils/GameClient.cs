@@ -12,9 +12,11 @@ using PokemonGo.RocketAPI.Console;
 using PokemonGo.RocketAPI.Enums;
 using PokemonGo.RocketAPI.Extensions;
 using PokemonGo_UWP.Entities;
+using POGOProtos.Data.Player;
 using POGOProtos.Inventory.Item;
 using POGOProtos.Map.Fort;
 using POGOProtos.Networking.Envelopes;
+using POGOProtos.Networking.Responses;
 using Universal_Authenticator_v2.Views;
 using CatchPokemonResponse = POGOProtos.Networking.Responses.CatchPokemonResponse;
 using CheckAwardedBadgesResponse = POGOProtos.Networking.Responses.CheckAwardedBadgesResponse;
@@ -100,6 +102,11 @@ namespace PokemonGo_UWP.Utils
         ///     Stores the current inventory
         /// </summary>
         public static ObservableCollection<ItemData> ItemsInventory { get; set; } = new ObservableCollection<ItemData>();
+
+        /// <summary>
+        ///     Stores the player stats
+        /// </summary>
+        public static PlayerStatsWrapper PlayerStats { get; set; } = new PlayerStatsWrapper(new PlayerStats());
 
         #endregion
 
@@ -311,6 +318,14 @@ namespace PokemonGo_UWP.Utils
             return await Client.Player.GetPlayer();
         }
 
+        ///
+        /// <summary>
+        ///     Gets player's 
+        /// </summary>
+        public static async Task<LevelUpRewardsResponse> GetLevelUpRewards(int level)
+        {
+            return await Client.Player.GetLevelUpRewards(level);
+        }
         /// <summary>
         ///     Gets player's inventoryDelta
         /// </summary>
@@ -321,19 +336,28 @@ namespace PokemonGo_UWP.Utils
         }
 
         /// <summary>
-        ///     Updates inventory data
+        ///     Updates inventory related data
         /// </summary>
         public static async Task UpdateInventory()
         {            
             // Get ALL the items
             var fullInventory = (await GetInventory()).InventoryDelta.InventoryItems;
+
+            // Rather than keeping track of every xp outcome we'll take the easier approach 
+            // of updating the player stats whenever the inventory gets updated
+            var newPlayerStats = fullInventory.First(item => item.InventoryItemData.PlayerStats != null).InventoryItemData.PlayerStats;
+            if (PlayerStats == null)
+                PlayerStats = new PlayerStatsWrapper(newPlayerStats);
+            else
+                PlayerStats.Update(newPlayerStats);
+
             var tmpItemsInventory = fullInventory.Where(item => item.InventoryItemData.Item != null).GroupBy(item => item.InventoryItemData.Item);
             ItemsInventory.Clear();
             foreach (var item in tmpItemsInventory)
             {
                 ItemsInventory.Add(item.First().InventoryItemData.Item);
             }
-        }
+        }        
 
         #endregion
 
