@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Windows.ApplicationModel;
 using Windows.Devices.Geolocation;
+using Windows.UI.Popups;
 using Windows.UI.Xaml;
 using PokemonGo.RocketAPI;
 using PokemonGo.RocketAPI.Console;
@@ -252,11 +253,27 @@ namespace PokemonGo_UWP.Utils
         {
             // Get all map objects from server
             var mapObjects = (await GetMapObjects(Geoposition)).Item1;
-
+            var incensePokemons = await Client.Map.GetIncensePokemons();
+            
             // update catchable pokemons
-            var newCatchablePokemons = mapObjects.MapCells.SelectMany(x => x.CatchablePokemons).ToArray();
-            Logger.Write($"Found {newCatchablePokemons.Length} catchable pokemons");
-            if (newCatchablePokemons.Length != CatchablePokemons.Count)
+            var newCatchablePokemons = mapObjects.MapCells.SelectMany(x => x.CatchablePokemons).ToList();
+
+            Logger.Write($"Found {newCatchablePokemons.Count} catchable pokemons");
+            if (incensePokemons.Result == GetIncensePokemonResponse.Types.Result.IncenseEncounterAvailable)
+            {
+
+                Logger.Write($"Found an incense pokemon");
+                newCatchablePokemons.Add(new MapPokemon()
+                {
+                    EncounterId = incensePokemons.EncounterId,
+                    PokemonId = incensePokemons.PokemonId,
+                    ExpirationTimestampMs = incensePokemons.DisappearTimestampMs,
+                    Latitude = incensePokemons.Latitude,
+                    Longitude = incensePokemons.Longitude,
+                    SpawnPointId = incensePokemons.EncounterLocation
+                });
+            }
+            if (newCatchablePokemons.Count != CatchablePokemons.Count)
             {
                 MapPokemonUpdated?.Invoke(null, null);
             }
@@ -343,20 +360,48 @@ namespace PokemonGo_UWP.Utils
             // Get ALL the items
             var fullInventory = (await GetInventory()).InventoryDelta.InventoryItems;
 
-            // Rather than keeping track of every xp outcome we'll take the easier approach 
-            // of updating the player stats whenever the inventory gets updated
-            var newPlayerStats = fullInventory.First(item => item.InventoryItemData.PlayerStats != null).InventoryItemData.PlayerStats;
-            if (PlayerStats == null)
-                PlayerStats = new PlayerStatsWrapper(newPlayerStats);
-            else
-                PlayerStats.Update(newPlayerStats);
-
             var tmpItemsInventory = fullInventory.Where(item => item.InventoryItemData.Item != null).GroupBy(item => item.InventoryItemData.Item);
             ItemsInventory.Clear();
             foreach (var item in tmpItemsInventory)
             {
                 ItemsInventory.Add(item.First().InventoryItemData.Item);
             }
+
+            // Rather than keeping track of every xp outcome we'll take the easier approach 
+            // of updating the player stats whenever the inventory gets updated
+            var newPlayerStats = fullInventory.First(item => item.InventoryItemData.PlayerStats != null).InventoryItemData.PlayerStats;
+            if (PlayerStats == null || PlayerStats.Level == 0)
+            {
+                var eggIncubators = fullInventory.First(x => x.InventoryItemData.EggIncubators != null).InventoryItemData.EggIncubators;
+                foreach (var eggIncubator in eggIncubators.EggIncubator)
+                {
+                    if (Math.Abs(eggIncubator.StartKmWalked) > 0) { 
+                        await new MessageDialog($"Egg incubator id {eggIncubator.Id}, pokemon id {eggIncubator.PokemonId}, start: {eggIncubator.StartKmWalked}, target: {eggIncubator.TargetKmWalked}").ShowAsyncQueue();
+
+                        if (eggIncubator.StartKmWalked >= eggIncubator.TargetKmWalked)
+                        {
+                            var hatchedEgg = await Client.Inventory.GetHatchedEgg();
+                            await new MessageDialog($"An egg hatched with pokemons: {string.Join(", ", hatchedEgg.PokemonId)}").ShowAsyncQueue();
+                        }
+                    }
+                    else
+                    {
+                        var firstPokemonEgg =
+                            fullInventory.Where(
+                                x =>
+                                    x.InventoryItemData.PokemonData != null && x.InventoryItemData.PokemonData.IsEgg &&
+                                    string.IsNullOrWhiteSpace(x.InventoryItemData.PokemonData.EggIncubatorId))
+                                .Select(x => x.InventoryItemData.PokemonData).FirstOrDefault();
+                        if (firstPokemonEgg != null)
+                        {
+                            firstPokemonEgg.EggIncubatorId = "taken";
+                            var result = await Client.Inventory.UseItemEggIncubator(eggIncubator.Id, firstPokemonEgg.Id);
+                            await new MessageDialog($"Pokemon egg put in incubator, result: {result.Result}, will take: {result.EggIncubator.TargetKmWalked} to hatch.").ShowAsyncQueue();
+                        }
+                    }
+                }
+            }
+            PlayerStats?.Update(newPlayerStats);
         }        
 
         #endregion
